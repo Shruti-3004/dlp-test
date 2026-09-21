@@ -1,1 +1,5 @@
-WIPED
+OPENAI_API_KEY=sk-DUMMY7xQ9mK2pL8vN4cR6tY1wE5uI0oP3aS9dF2gH
+ 
+POSTGRES_URL=postgresql://app_admin:DummyP0stgres_9xK4Q@db-test.example.invalid:5432/customer_db
+ 
+STRIPE_SECRET_KEY=sk_test_DUMMY4nP8qR2vX7mK9cL5wT1yH6sJ3fG0
