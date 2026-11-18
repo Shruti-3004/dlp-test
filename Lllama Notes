@@ -1,0 +1,114 @@
+Meta AI and Microsoft have joined forces to introduce Llama 2, the next generation of Meta’s open-source large language model.
+
+The best part? Llama 2 is available for free, both for research and commercial use.
+
+LLaMA: Large Language Model Meta AI
+Large Language Model Meta AI (LLaMA 1) is the first version of the state-of-the-art foundational large language model that was released by Meta in February this year. It is an impressive collection of foundational models, comprised of models with parameter sixes ranging from 7 billion to 65 billion.
+
+LLaMA 1 stands out due to its extensive training on trillion of tokens, showcasing that state-of-the-art models can be attained solely though publicly available datasets and without the need for proprietary or inaccessible data.
+
+💡 Read the published paper LLaMA: Open and Efficient Foundation Language Models.
+Notably, the LLaMA-13B model outperformed ChatGPT, which has a significantly larger parameter size of 175 billion, across most benchmark datasets. This accomplishment highlights LLaMA’s efficiency in delivering top-tier performance with significantly fewer parameters.
+
+The largest model of the collection, LLaMA-65B, holds its own amongst other leading models in the field of natural language processing (NLP) like Chinchilla-70B and PaLM-540B.
+
+LLaMA stands out due to its strong emphasis on openness and accessibility. Meta AI, the creators of LLaMA, have demonstrated their dedication to advancing the field of AI through collaborative efforts by releasing all their models to the research community. This is notably in contrast to OpenAI’s GPT-3 or GPT-4.
+
+you can have a look at the full code on my github
+
+LLAMA2 :
+
+Llama 2 is a family of pre-trained and fine-tuned large language models (LLMs), ranging in scale from 7B to 70B parameters, from the AI group at Meta, the parent company of Facebook. According to Meta AI, Llama 2 Chat LLMs are optimized for dialogue use cases and outperform open-source chat models on most benchmarks they tested. Based on Meta’s human evaluations for helpfulness and safety, the company says Llama 2 may be “a suitable substitute for closed source models.” Llama 2, like the original Llama model, is based on the Google transformer architecture, with improvements. Llama’s improvements include RMSNorm pre-normalization, inspired by GPT-3; a SwiGLU activation function, inspired by Google’s PaLM; multi-query attention instead of multi-head attention; and rotary positional embeddings (RoPE), inspired by GPT Neo. Llama training used the AdamW optimizer. Llama 2’s primary differences from Llama are increased context length (4096 vs. 2048 tokens) and grouped-query attention (GQA) instead of multi-query attention (MQA) in the two larger models.
+
+Now we are going to discuses the architecture from scratch :
+
+To dive right into action, our first step is installing the necessary library and importing the required packages. To get our hands dirty swiftly, I’ll begin by downloading a compact dataset from Hugging Face, providing us with a set of text sentences. These sentences will be transformed into tokens using the prebuilt tokenizer from ‘daryl149/llama-2–7b-chat-hf’ the very same tokenizer used during LLaMA’s pre-training.
+
+!pip install transformers datasets SentencePiece
+import random
+import math
+import numpy as np
+import torch
+import torch.nn as nn
+from torch.nn import functional as F
+from torch.utils.data import Dataset
+from torch.utils.data.dataloader import DataLoader
+from transformers import LlamaTokenizer
+from datasets import load_dataset
+Press enter or click to view image in full size
+
+model_id="daryl149/llama-2-7b-chat-hf"
+tokenizer=LlamaTokenizer.from_pretrained(model_id)
+tokenizer.pad_token=tokenizer.eos_token
+config = {
+    'vocab_size': tokenizer.vocab_size,
+    'n_layers': 1,
+    'embed_dim': 2048,
+    'n_heads': 32,
+    'n_kv_heads': 8,
+    'multiple_of': 64,
+    'ffn_dim_multiplier': None,
+    'norm_eps': 1e-5,
+    'max_batch_size': 16,
+    'max_seq_len': 64,
+    'device': 'cuda',
+}
+dataset=load_dataset('glue','ax',split='test')
+dataset=dataset.select_columns(['premise','hypothesis'])
+test_set=tokenizer(random.sample(dataset['premise'],config['max_batch_size']),
+truncation=True,
+max_length=config['max_seq_len'],
+padding='max_length',
+return_tensors='pt')
+     
+  
+RMSNorm pre-normalization:-
+RMSNorm: Root Mean Square Layer Normalization
+
+LLaMA normalizes the input of each transformer sub-layer, instead of normalizing the output.
+
+Inspiration of including pre-normalization is taken from GPT3.
+
+RMSNorm is extension of Layer Normalization (LayerNorm). Reason behind using RMSNorm is the computational overhead in LayerNorm. This makes improvements slow and expensive. RMSNorm achieves comparable performance against LayerNorm but reduces the running time by 7%~64%.
+
+Let first understand LayerNorm, It has two properties.
+
+a. re-centring: It make model insensitive to shift noises on both inputs and weights.
+
+b. re-scaling: It keeps the output representations intact when both inputs and weights are randomly scaled.
+
+RMSNorm claims that most of the benefits comes from re-scaling.
+
+RMSNorm does re-scaling invariance and regularizes the summed inputs simply according to the root mean square (RMS) statistic.
+
+Press enter or click to view image in full size
+
+Intuitively, RMSNorm simplifies LayerNorm by totally removing the mean statistic in Eq. ) at the cost of sacrificing the invariance that mean normization affords. When the mean of summed inputs is zero, RMSNorm is exactly equal to LayerNoFm. Although RMSNorm does not re-center
+
+class RMSNorm(nn.Module):
+    def __init__(self, dim, eps=1e-6):
+        super().__init__()
+        self.eps = eps
+        self.weight = nn.Parameter(torch.ones(dim))
+
+    def _norm(self, x: torch.Tensor):
+        # (m, seq_len, dim) * (m, seq_len, 1) = (m, seq_len, dim)
+        # rsqrt: 1 / sqrt(x)
+        return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
+
+    def forward(self, x: torch.Tensor):
+        # weight is a gain parameter used to re-scale the standardized summed inputs
+        # (dim) * (m, seq_len, dim) = (m, seq_Len, dim)
+        return self.weight * self._norm(x.float()).type_as(x)
+        
+    
+This custom script first standardizes the input x, by dividing it by its root mean square, thereby making it invariant to scaling changes. The learned weight parameter self.weight is applied to each element in the standardized tensor. This operation adjusts the magnitude of the values based on the learned scaling factor.
+
+Rotary Embeddings[ROPE]
+Press enter or click to view image in full size
+
+What’s the difference between the absolute positional encodings and the relative ones?
+
+1.Absolute positional encodings are fixed vectors that are added to the embedding of a token to represent its absolute position in the sentence. So, it deals with one token at a time. You can think of it as the pair (latitude, longitude) on a map: each point on earth will have a unique pair.
+
+2. Relative positional encodings, on the other hand, deals with two tokens at a time and it is involved when we calculate the attention: since the attention mechanism captures the “intensity” of how much two words are related two each other, relative positional encodings tells the attention mechanism the distance between the two words involved in it. So, given two tokens, we create a vector that represents their distance
